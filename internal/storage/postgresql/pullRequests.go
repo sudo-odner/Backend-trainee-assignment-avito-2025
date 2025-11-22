@@ -1,0 +1,258 @@
+package postgresql
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/lib/pq"
+	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/domain"
+	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
+)
+
+func mergePR(tx *sql.Tx, prID string) error {
+	const op = "storage.postgresql.mergePR"
+
+	// Получаем PR, делаем проверку на Мердж
+	var status string
+	err := tx.QueryRow(`SELECT status FROM pull_requests WHERE id=$1`, prID).Scan(&status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storage.ErrPRNotFound
+		}
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	if status == "MERGED" {
+		return storage.ErrPRAlreadyMerged
+	}
+	return nil
+}
+
+func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.PullRequest, error) {
+	const op = "storage.postgresql.createPRWithReviewers"
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	// Проверка что пользователь существует
+	author, err := userIDIsCreated(tx, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Создаем пулреквест, если уже создан то отменяем все
+	_, err = tx.Exec(
+		`insert into pull_requests (id, name, author_id, status) ($1, $2, $3, $4)`,
+		prID, prName, authorID, "OPEN")
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			return nil, storage.ErrPRAlreadyExists
+		}
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Получаем команду пользователя
+	nameTeam, err := getUserTeam(tx, author.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Выбираем до 2 активных ревюверов из команды автора, кроме него
+	rows, err := tx.Query(`
+	select u.id, u.name, u.is_active
+	from team_users tu
+	join users u on tu.user_id = u.id
+	where tu.team_name = $1 and u.is_active=true and u.id <> $2
+	order by random() limit 2`,
+		nameTeam, authorID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var reviewers []domain.User
+	for rows.Next() {
+		var r domain.User
+		if err := rows.Scan(&r.ID, &r.Name, &r.IsActive); err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+		reviewers = append(reviewers, r)
+	}
+
+	// Создаем связи
+	for _, r := range reviewers {
+		_, err := tx.Exec(`insert into pr_reviewers(pull_request_id, reviewer_id) values($1, $2)`, prID, r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return &domain.PullRequest{
+		ID:        prID,
+		Name:      prName,
+		Author:    *author,
+		Status:    "OPEN",
+		Reviewers: reviewers,
+	}, nil
+}
+
+func (s *Storage) SoftMerge(prID string) error {
+	row := s.db.QueryRow(`select status from pull_requests where id = $1;`, prID)
+	var status string
+	if err := row.Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storage.ErrPRNotFound
+		}
+		return err
+	}
+	if status != "MERGED" {
+		_, err := s.db.Exec(`update pull_requests set status = $2, merged_at = $3 where id = $1`, prID, "MERGED", time.Now())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Storage) GetPRByID(pullRequestID string) (*domain.PullRequest, error) {
+	const op = "storage.postgresql.GetPRByID"
+
+	querySelectPR := `
+	select pr.id, pr.name, a.id, a.name, a.is_active, pr.status, pr.merged_at, r.id, r.name, r.is_active
+	from pull_requests pr
+	left join users a on a.id = pr.author_id
+	left join pr_reviewers r on pr.id = r.pull_request_id
+	left join users u on r.reviewer_id = u.id
+	where pr.id = $1
+	order by pr.id
+	`
+
+	rows, err := s.db.Query(querySelectPR, pullRequestID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var pr *domain.PullRequest
+
+	reviewersMap := make(map[string]domain.User)
+	if rows.Next() {
+		var prID, prName, authorID, authorName, prStatus, reviewerID, reviewerName sql.NullString
+		var authorIsActive, reviewerIsActive sql.NullBool
+		var prMergedAt sql.NullTime
+		if err := rows.Scan(
+			&prID,
+			&prName,
+			&authorID, &authorName, &authorIsActive,
+			&prStatus, &prMergedAt,
+			&reviewerID, &reviewerName, reviewerIsActive); err != nil {
+		}
+		if pr == nil {
+			pr = &domain.PullRequest{
+				ID:   prID.String,
+				Name: prName.String,
+				Author: domain.User{
+					ID:       authorID.String,
+					Name:     authorName.String,
+					IsActive: authorIsActive.Bool,
+				},
+				Status:    prStatus.String,
+				Reviewers: []domain.User{},
+				MergedAt:  prMergedAt.Time,
+			}
+		}
+
+		if reviewerID.Valid {
+			if _, exists := reviewersMap[reviewerID.String]; !exists {
+				reviewer := domain.User{
+					ID:       reviewerID.String,
+					Name:     reviewerName.String,
+					IsActive: reviewerIsActive.Bool,
+				}
+				pr.Reviewers = append(pr.Reviewers, reviewer)
+				reviewersMap[reviewerID.String] = reviewer
+			}
+		}
+	}
+
+	if pr == nil {
+		return nil, storage.ErrPRNotFound
+	}
+
+	return pr, nil
+}
+
+func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequest, error) {
+	const op = "storage.postgresql.ReassignReviewer"
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	// Проверка на merge
+	if err := mergePR(tx, prID); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Проверка на то что ревювер назначен
+	var exists bool
+	err = tx.QueryRow(`select exists(select 1 from pull_requests where id = $1 and reviewer_id=$2)`, prID, oldReviewerID).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	if !exists {
+		return nil, storage.ErrReviewerNotAssigned
+	}
+
+	// Получаем название старого ревювера
+	var teamName string
+	err = tx.QueryRow(`select team_name from team_users where user_id=$1`, oldReviewerID).Scan(&teamName)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Находим случайного активного пользователя из команды (кроме старого ревьювера)
+	var newReviewerID string
+	err = tx.QueryRow(`
+	select u.id 
+    from team_users tu
+    join users u ON tu.user_id=u.id
+    where tu.team_name=$1 AND u.is_active=true AND u.id <> $2
+    order by random() limit 1`, teamName, oldReviewerID).Scan(&newReviewerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, storage.ErrNoCandidate
+		}
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Обновляем ревювера
+	_, err = tx.Exec(
+		`update pr_reviewers set reviewer_id=$1 where pull_request_id=$2 AND reviewer_id=$3`,
+		newReviewerID, prID, oldReviewerID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// Получаем обновлённый PR с ревюверами
+	pr, err := s.GetPRByID(prID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return pr, nil
+}

@@ -1,7 +1,8 @@
 package models
 
 type User struct {
-	ID       int64  `db:"id"`
-	Name     string `db:"name"`
-	isActive bool   `db:"is_active"`
+	InternalID int64  `db:"internal_id"`
+	ID         string `db:"id"`
+	Name       string `db:"name"`
+	IsActive   bool   `db:"is_active"`
 }
