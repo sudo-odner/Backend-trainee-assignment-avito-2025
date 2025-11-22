@@ -3,9 +3,10 @@ service_name: "service-pr"
 storage:
   host: "localhost"
   port: "5432"
-  user: "postgres"
-  password: "postgres"
-  db_name: "pr"
+  user: "pr_system_owner"
+  password: "pr_system_owner"
+  db_name: "pr_system"
+  ssl_mode: "disable"
 http_server:
   host: "0.0.0.0"
   port: "8080"

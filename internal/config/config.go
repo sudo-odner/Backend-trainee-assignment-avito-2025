@@ -16,6 +16,7 @@ type Config struct {
 		User     string `yaml:"user"`
 		Password string `yaml:"password"`
 		DBName   string `yaml:"db_name"`
+		SSLMode  string `yaml:"ssl_mode"`
 	} `yaml:"storage"`
 	HttpServer struct {
 		Host string `yaml:"host"`
