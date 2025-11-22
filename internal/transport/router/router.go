@@ -14,11 +14,11 @@ type Router struct {
 	storage *postgresql.Storage
 }
 
-func notI(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Not implemented yet"))
-}
-
 func New(log *slog.Logger, storage *postgresql.Storage) http.Handler {
+	r := Router{
+		log:     log,
+		storage: storage,
+	}
 	// Init router
 	router := chi.NewRouter()
 
@@ -31,19 +31,19 @@ func New(log *slog.Logger, storage *postgresql.Storage) http.Handler {
 	//Router
 	// Teams
 	router.Route("/team", func(team chi.Router) {
-		team.Post("/add", notI)
-		team.Get("/get", notI)
+		team.Post("/add", r.TPOSTAdd)
+		team.Get("/get", r.TGET)
 	})
 	// Users
 	router.Route("/users", func(users chi.Router) {
-		users.Post("/setIsActive", notI)
-		users.Get("/getReview", notI)
+		users.Post("/setIsActive", r.UserPOSTSetIsActivate)
+		users.Get("/getReview", r.UserGETGetReview)
 	})
 	// PullRequests
 	router.Route("/pullRequest", func(pullRequest chi.Router) {
-		pullRequest.Post("/create", notI)
-		pullRequest.Post("/merge", notI)
-		pullRequest.Post("/reassign", notI)
+		pullRequest.Post("/create", r.PRPOSTCreate)
+		pullRequest.Post("/merge", r.PRPOSTMerge)
+		pullRequest.Post("/reassign", r.PRPOSTReassign)
 	})
 	return router
 }
