@@ -10,12 +10,12 @@ import (
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
 )
 
-func userIDIsCreated(tx *sql.Tx, userID string) (*domain.User, error) {
+func userIsCreated(tx *sql.Tx, userID string) (*domain.User, error) {
 	const op = "storage.userIsCreated"
 
 	var user domain.User
 	row := tx.QueryRow(`select id, name, is_active from users where id = $1;`, userID)
-	if err := row.Scan(&userID, &user.Name, &user.IsActive); err != nil {
+	if err := row.Scan(&user.ID, &user.Name, &user.IsActive); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.ErrUserNotFound
 		}
@@ -24,11 +24,11 @@ func userIDIsCreated(tx *sql.Tx, userID string) (*domain.User, error) {
 	return &user, nil
 }
 
-func (s *Storage) SetUserIsActive(user domain.User) error {
+func (s *Storage) SetUserIsActive(userID string, isActive bool) error {
 	const op = "storage.postgresql.SetUserIsActive"
 
 	query := `UPDATE users SET is_active = $1 WHERE id = $2`
-	res, err := s.db.Exec(query, true, user.ID)
+	res, err := s.db.Exec(query, isActive, userID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
@@ -54,16 +54,16 @@ func (s *Storage) GetUserPRsByUserID(userID string) ([]domain.PullRequest, error
 	defer tx.Rollback()
 
 	querySelectPRs := `
-	select pr.id, pr.name, pr.status, pr.merged_at, r.reviewer_id, r.name, r.is_active
+	select pr.id, pr.name, pr.status, pr.merged_at, ru.id, ru.name, ru.is_active
     from pull_requests pr 
-	left join pr_reviewers r on pr.id = pr.pull_request_id
-    left join users u on u.id = r.reviewer_id
+	left join pr_reviewers r on pr.id = r.pull_request_id
+    left join users ru on ru.id = r.reviewer_id
 	where pr.author_id = $1
 	order by pr.id
 	;`
 
 	// Поиск и проверка пользователя
-	user, err := userIDIsCreated(tx, userID)
+	user, err := userIsCreated(tx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
@@ -115,8 +115,9 @@ func (s *Storage) GetUserPRsByUserID(userID string) ([]domain.PullRequest, error
 	for _, pr := range prMap {
 		userPRs = append(userPRs, *pr)
 	}
-	tx.Commit()
-
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
 	return userPRs, nil
 }
 
@@ -127,7 +128,7 @@ func (s *Storage) GetUserByID(userID string) (*domain.User, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	defer tx.Rollback()
-	user, err := userIDIsCreated(tx, userID)
+	user, err := userIsCreated(tx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}

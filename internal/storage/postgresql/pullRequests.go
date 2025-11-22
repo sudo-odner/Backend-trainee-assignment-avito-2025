@@ -40,14 +40,14 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 	defer tx.Rollback()
 
 	// Проверка что пользователь существует
-	author, err := userIDIsCreated(tx, authorID)
+	author, err := userIsCreated(tx, authorID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Создаем пулреквест, если уже создан то отменяем все
 	_, err = tx.Exec(
-		`insert into pull_requests (id, name, author_id, status) ($1, $2, $3, $4)`,
+		`insert into pull_requests (id, name, author_id, status) values ($1, $2, $3, $4)`,
 		prID, prName, authorID, "OPEN")
 	if err != nil {
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
@@ -65,7 +65,7 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 	// Выбираем до 2 активных ревюверов из команды автора, кроме него
 	rows, err := tx.Query(`
 	select u.id, u.name, u.is_active
-	from team_users tu
+	from teams_users tu
 	join users u on tu.user_id = u.id
 	where tu.team_name = $1 and u.is_active=true and u.id <> $2
 	order by random() limit 2`,
@@ -127,11 +127,11 @@ func (s *Storage) GetPRByID(pullRequestID string) (*domain.PullRequest, error) {
 	const op = "storage.postgresql.GetPRByID"
 
 	querySelectPR := `
-	select pr.id, pr.name, a.id, a.name, a.is_active, pr.status, pr.merged_at, r.id, r.name, r.is_active
+	select pr.id, pr.name, a.id, a.name, a.is_active, pr.status, pr.merged_at, ru.id, ru.name, ru.is_active
 	from pull_requests pr
 	left join users a on a.id = pr.author_id
 	left join pr_reviewers r on pr.id = r.pull_request_id
-	left join users u on r.reviewer_id = u.id
+	left join users ru on r.reviewer_id = ru.id
 	where pr.id = $1
 	order by pr.id
 	`
@@ -191,50 +191,56 @@ func (s *Storage) GetPRByID(pullRequestID string) (*domain.PullRequest, error) {
 	return pr, nil
 }
 
-func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequest, error) {
+func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequest, string, error) {
 	const op = "storage.postgresql.ReassignReviewer"
 
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 	defer tx.Rollback()
 
+	// Проверяем существет ли пользователь
+	_, err = userIsCreated(tx, oldReviewerID)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", op, err)
+	}
+
 	// Проверка на merge
 	if err := mergePR(tx, prID); err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Проверка на то что ревювер назначен
 	var exists bool
-	err = tx.QueryRow(`select exists(select 1 from pull_requests where id = $1 and reviewer_id=$2)`, prID, oldReviewerID).Scan(&exists)
+	err = tx.QueryRow(`select exists(select 1 from pr_reviewers where pull_request_id = $1 and reviewer_id=$2)`, prID, oldReviewerID).Scan(&exists)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 	if !exists {
-		return nil, storage.ErrReviewerNotAssigned
+		return nil, "", storage.ErrReviewerNotAssigned
 	}
 
-	// Получаем название старого ревювера
+	// Получаем название команды у старого ревювера
 	var teamName string
-	err = tx.QueryRow(`select team_name from team_users where user_id=$1`, oldReviewerID).Scan(&teamName)
+	err = tx.QueryRow(`select team_name from teams_users where user_id=$1`, oldReviewerID).Scan(&teamName)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Находим случайного активного пользователя из команды (кроме старого ревьювера)
 	var newReviewerID string
 	err = tx.QueryRow(`
 	select u.id 
-    from team_users tu
-    join users u ON tu.user_id=u.id
-    where tu.team_name=$1 AND u.is_active=true AND u.id <> $2
-    order by random() limit 1`, teamName, oldReviewerID).Scan(&newReviewerID)
+    from teams_users tu
+    join users u ON tu.user_id = u.id
+    where tu.team_name=$1 and u.is_active=true and u.id <> $2 and u.id <> (select author_id from pull_requests where id = $3)
+    order by random() limit 1`, teamName, oldReviewerID, prID).Scan(&newReviewerID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, storage.ErrNoCandidate
+			return nil, "", storage.ErrNoCandidate
 		}
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Обновляем ревювера
@@ -242,17 +248,17 @@ func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequ
 		`update pr_reviewers set reviewer_id=$1 where pull_request_id=$2 AND reviewer_id=$3`,
 		newReviewerID, prID, oldReviewerID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Получаем обновлённый PR с ревюверами
 	pr, err := s.GetPRByID(prID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
-	return pr, nil
+	return pr, newReviewerID, nil
 }

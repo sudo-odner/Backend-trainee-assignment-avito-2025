@@ -1,15 +1,12 @@
 package postgresql
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage/models"
 )
 
@@ -26,8 +23,8 @@ func initDB(db *sqlx.DB) error {
 	);
 	create table if not exists teams_users (
 	    internal_id bigserial primary key,
-	    team_name text references team(name),
-	    user_id text references user(id)
+	    team_name text references teams(name),
+	    user_id text references users(id)
 	);
 	create table if not exists pull_requests (
 	    internal_id bigserial primary key,
@@ -65,11 +62,6 @@ func New(host, port, user, password, dbName, sslMode string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-// Получение команды по имени
-func GetTeamByName(name string) (*models.Team, error) {
-
-}
-
 // Добавление пользоватлей, если пользователь с id создан, то обновляем
 func (s *Storage) SoftAddUser(id, name string, isActive bool) error {
 	const op = "storage.postgresql.SoftAddUser"
@@ -85,11 +77,6 @@ func (s *Storage) SoftAddUser(id, name string, isActive bool) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 	return nil
-}
-
-// Установить пользователю is_active
-func (s *Storage) SoftRemoveUser(id string, isActive bool) error {
-
 }
 
 // Получить пользователя по id

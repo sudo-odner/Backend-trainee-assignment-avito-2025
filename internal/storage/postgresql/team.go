@@ -13,19 +13,34 @@ import (
 
 func getUserTeam(tx *sql.Tx, userID string) (string, error) {
 	const op = "storage.getUserTeam"
+
 	var team string
-	err := tx.QueryRow(`select team_name from teams where user_id = &1`, userID).Scan(&team)
+	err := tx.QueryRow(`select team_name from teams_users where user_id = $1`, userID).Scan(&team)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", storage.ErrUserNotFound
+			return "", storage.ErrTeamNotFound
 		}
-		return "", err
+		return "", fmt.Errorf("%s: %w", op, err)
 	}
 	return team, nil
 }
 
+func teamExists(tx *sql.Tx, nameTeam string) error {
+	const op = "storage.teamExists"
+
+	var exists bool
+	err := tx.QueryRow(`select exists(select 1 from teams where name = $1)`, nameTeam).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if !exists {
+		return fmt.Errorf("%s: %w", op, storage.ErrTeamNotFound)
+	}
+	return nil
+}
+
 // Создание команды и добавление пользователь в нее
-func (s *Storage) CreateTeam(team domain.Team, users []domain.User) error {
+func (s *Storage) CreateTeam(nameTeam string, users []domain.User) error {
 	const op = "storage.postgresql.CreateTeam"
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -40,12 +55,12 @@ func (s *Storage) CreateTeam(team domain.Team, users []domain.User) error {
 	    name = EXCLUDED.name,
 	    is_active = EXCLUDED.is_active
 	`
-	querySoftTeamsUsers := `insert into users (id, name, is_active) values ($1, $2, $3) on conflict do nothing`
+	querySoftTeamsUsers := `insert into teams_users (team_name, user_id) values ($1, $2) on conflict do nothing`
 
 	// Создаем команду
-	res := tx.QueryRow(queryInsertTeam, team.Name)
-	var nameTeam string
-	if err = res.Scan(&nameTeam); err != nil {
+	res := tx.QueryRow(queryInsertTeam, nameTeam)
+	var nameTeamRes string
+	if err = res.Scan(&nameTeamRes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storage.ErrTeamAlreadyExists
 		}
@@ -59,7 +74,7 @@ func (s *Storage) CreateTeam(team domain.Team, users []domain.User) error {
 			return fmt.Errorf("%s: %w", op, err)
 		}
 		// Добавляем связи
-		_, err = tx.Exec(querySoftTeamsUsers, team.Name, user.ID)
+		_, err = tx.Exec(querySoftTeamsUsers, nameTeam, user.ID)
 		if err != nil {
 			return fmt.Errorf("%s: %w", op, err)
 		}
@@ -71,9 +86,34 @@ func (s *Storage) CreateTeam(team domain.Team, users []domain.User) error {
 	return nil
 }
 
+// Получение команды пользователя
+func (s *Storage) GetTeamByUserID(userID string) (string, error) {
+	const op = "storage.getTeamByUserID"
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	team, err := getUserTeam(tx, userID)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", op, err)
+	}
+	return team, nil
+}
+
 // Получение всех пользователей у команды по ее имени
 func (s *Storage) GetUsersTeamByName(nameTeam string) (*domain.Team, error) {
 	const op = "storage.postgresql.GetUsersTeamByName"
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	if err := teamExists(tx, nameTeam); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
 
 	query := `
 	select u.internal_id, u.id, u.name, u.is_active
@@ -82,7 +122,7 @@ func (s *Storage) GetUsersTeamByName(nameTeam string) (*domain.Team, error) {
 	where tu.team_name = $1
 	;`
 
-	rows, err := s.db.Query(query, nameTeam)
+	rows, err := tx.Query(query, nameTeam)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
@@ -102,5 +142,8 @@ func (s *Storage) GetUsersTeamByName(nameTeam string) (*domain.Team, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
 	return &team, nil
 }
