@@ -45,5 +45,9 @@ func New(log *slog.Logger, storage *postgresql.Storage) http.Handler {
 		pullRequest.Post("/merge", r.PRPOSTMerge)
 		pullRequest.Post("/reassign", r.PRPOSTReassign)
 	})
+	// Statistics
+	router.Route("/statistic", func(statistics chi.Router) {
+		statistics.Get("/reviews", r.StatGetReviews)
+	})
 	return router
 }

@@ -21,3 +21,8 @@ type PullRequest struct {
 	Reviewers []User
 	MergedAt  time.Time
 }
+
+type UserReviewStat struct {
+	UserID      string
+	ReviewCount int
+}
