@@ -57,7 +57,7 @@ func (router *Router) TPOSTAdd(w http.ResponseWriter, r *http.Request) {
 		users = append(users, domain.User{ID: user.UserID, Name: user.Username, IsActive: user.IsActive})
 	}
 
-	err := router.storage.CreateTeam(req.TeamName, users)
+	err := router.storage.CreateTeamWithUser(req.TeamName, users)
 	if err != nil {
 		if errors.Is(err, storage.ErrTeamAlreadyExists) {
 			router.log.Error("failed to create team", sl.Err(err))
@@ -101,7 +101,7 @@ func (router *Router) TGET(w http.ResponseWriter, r *http.Request) {
 
 	teamName := r.URL.Query().Get("team_name")
 
-	infoTeam, err := router.storage.GetUsersTeamByName(teamName)
+	infoTeam, err := router.storage.GetTeam(teamName)
 	if err != nil {
 		if errors.Is(err, storage.ErrTeamNotFound) {
 			router.log.Error("failed to find team", sl.Err(err))

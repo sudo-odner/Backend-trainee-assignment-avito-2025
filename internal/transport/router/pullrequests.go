@@ -127,8 +127,8 @@ func (router *Router) PRPOSTMerge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Отметить PR как MERGED (если до этого уже MERGED, время тоже самое(идемпотентная операция)
-	err := router.storage.SoftMerge(req.PullRequestID)
-	if err != nil {
+	err := router.storage.MergePR(req.PullRequestID)
+	if err != nil && !errors.Is(err, storage.ErrPRAlreadyMerged) {
 		if errors.Is(err, storage.ErrPRNotFound) {
 			router.log.Error("PR not found", sl.Err(err))
 			w.WriteHeader(http.StatusNotFound)

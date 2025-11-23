@@ -91,8 +91,7 @@ func (router *Router) UserPOSTSetIsActivate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// Получить команду пользователя
-	router.log.Info("Test", user.ID)
-	teamName, err := router.storage.GetTeamByUserID(user.ID)
+	teamName, err := router.storage.GetUserTeamByID(user.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
 			router.log.Error("user not found", sl.Err(err))
@@ -118,7 +117,7 @@ func (router *Router) UserPOSTSetIsActivate(w http.ResponseWriter, r *http.Reque
 			UserID:   user.ID,
 			Username: user.Name,
 			TeamName: teamName,
-			IsActive: user.IsActive,
+			IsActive: req.IsActive,
 		},
 	})
 	return
@@ -138,7 +137,7 @@ func (router *Router) UserGETGetReview(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.URL.Query().Get("user_id")
 
-	prs, err := router.storage.GetUserPRsByUserID(userID)
+	prs, err := router.storage.GetUserPRsByID(userID)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
 			router.log.Error("user not found", sl.Err(err))
