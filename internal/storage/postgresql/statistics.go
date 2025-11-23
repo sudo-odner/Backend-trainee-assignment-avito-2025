@@ -18,7 +18,6 @@ func (s *Storage) GetReviewStat() ([]domain.UserReviewStat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
-	defer rows.Close()
 
 	// Переброр всех reviewer
 	stats := make([]domain.UserReviewStat, 0)
@@ -29,6 +28,10 @@ func (s *Storage) GetReviewStat() ([]domain.UserReviewStat, error) {
 			return nil, err
 		}
 		stats = append(stats, stat)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	return stats, nil

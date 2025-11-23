@@ -44,7 +44,6 @@ func (s *Storage) GetTeam(nameTeam string) (*domain.Team, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
-	defer rows.Close()
 
 	var team domain.Team
 
@@ -72,7 +71,6 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
-	defer tx.Rollback()
 
 	queryInsertTeam := `insert into teams (name) values ($1) on conflict(name) do nothing returning name`
 	querySoftInsertUser := `
@@ -87,9 +85,11 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 	res := tx.QueryRow(queryInsertTeam, nameTeam)
 	var nameTeamRes string
 	if err = res.Scan(&nameTeamRes); err != nil {
+		_ = tx.Rollback()
 		if errors.Is(err, sql.ErrNoRows) {
 			return storage.ErrTeamAlreadyExists
 		}
+		return fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Добавляем пользователей(обновляем/создаем пользователя) к команде
@@ -97,22 +97,26 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 		// Обновляем/Добовляем пользователей
 		_, err = tx.Exec(querySoftInsertUser, user.ID, user.Name, user.IsActive)
 		if err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 
 		// Удаляем старую связь с командой (у пользователя должна быть одна команда) TODO: Придумать другую логику
 		if _, err := tx.Exec(`delete from teams_users where user_id = $1`, user.ID); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 
 		// Добавляем связи
 		_, err = tx.Exec(querySoftTeamsUsers, nameTeam, user.ID)
 		if err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
 		return fmt.Errorf("%s: %w", op, err)
 	}
 	return nil

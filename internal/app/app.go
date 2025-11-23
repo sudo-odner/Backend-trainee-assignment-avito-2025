@@ -44,5 +44,4 @@ func Run(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info(fmt.Sprintf("server listening on '%s'", addr))
-	return
 }

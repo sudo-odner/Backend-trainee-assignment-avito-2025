@@ -120,7 +120,6 @@ func (router *Router) UserPOSTSetIsActivate(w http.ResponseWriter, r *http.Reque
 			IsActive: req.IsActive,
 		},
 	})
-	return
 }
 
 func (router *Router) UserGETGetReview(w http.ResponseWriter, r *http.Request) {
@@ -170,5 +169,4 @@ func (router *Router) UserGETGetReview(w http.ResponseWriter, r *http.Request) {
 		UserID:       userID,
 		PullRequests: responsePRs,
 	})
-	return
 }

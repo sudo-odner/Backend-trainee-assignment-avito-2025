@@ -86,7 +86,6 @@ func (router *Router) PRPOSTCreate(w http.ResponseWriter, r *http.Request) {
 		Status:            pr.Status,
 		AssignedReviewers: assignedReviewers,
 	})
-	return
 }
 
 func (router *Router) PRPOSTMerge(w http.ResponseWriter, r *http.Request) {

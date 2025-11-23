@@ -79,7 +79,6 @@ func (s *Storage) GetUserPRsByID(userID string) ([]*domain.PullRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
-	defer rows.Close()
 
 	prMap := make(map[string]*domain.PullRequest)
 	for rows.Next() {
@@ -112,6 +111,10 @@ func (s *Storage) GetUserPRsByID(userID string) ([]*domain.PullRequest, error) {
 				IsActive: reviewerIsActive.Bool})
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
 	userPRs := make([]*domain.PullRequest, 0, len(prMap))
 	for _, pr := range prMap {
 		userPRs = append(userPRs, pr)
