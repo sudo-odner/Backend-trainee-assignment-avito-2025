@@ -1,12 +1,12 @@
-env: "local"
+env: "dev"
 service_name: "service-pr"
 storage:
-  host: "localhost"
+  host: "db"
   port: "5432"
   user: "pr_system_owner"
   password: "pr_system_owner"
   db_name: "pr_system"
   ssl_mode: "disable"
 http_server:
-  host: "localhost"
+  host: "0.0.0.0"
   port: "8080"

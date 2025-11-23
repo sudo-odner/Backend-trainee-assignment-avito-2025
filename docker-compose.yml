@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:14
+    container_name: pr_system_db
+    environment:
+      POSTGRES_USER: pr_system_owner
+      POSTGRES_PASSWORD: pr_system_owner
+      POSTGRES_DB: pr_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: pr_system_owner
+      DB_PASSWORD: pr_system_owner
+      DB_NAME: pr_system
+
+volumes:
+  db_data:
