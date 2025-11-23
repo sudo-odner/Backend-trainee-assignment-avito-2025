@@ -11,4 +11,6 @@ var (
 	ErrPRAlreadyMerged     = errors.New("pull request already merged")
 	ErrReviewerNotAssigned = errors.New("reviewer not assigned")
 	ErrNoCandidate         = errors.New("no candidate")
+	ErrRowsNotClosed       = errors.New("rows not closed")
+	ErrRollbackFailed      = errors.New("rollback failed")
 )

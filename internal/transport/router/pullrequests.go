@@ -168,7 +168,7 @@ func (router *Router) PRPOSTMerge(w http.ResponseWriter, r *http.Request) {
 	for _, reviewer := range pr.Reviewers {
 		reviewers = append(reviewers, reviewer.ID)
 	}
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
 	render.JSON(w, r, response{
 		PR: responsePR{
 			PullRequestID:   pr.ID,

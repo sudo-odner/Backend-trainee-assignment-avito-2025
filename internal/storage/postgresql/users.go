@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/domain"
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
@@ -79,6 +80,11 @@ func (s *Storage) GetUserPRsByID(userID string) ([]*domain.PullRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("rows close failed: %v", err)
+		}
+	}()
 
 	prMap := make(map[string]*domain.PullRequest)
 	for rows.Next() {

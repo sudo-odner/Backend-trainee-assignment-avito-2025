@@ -2,6 +2,7 @@ package postgresql
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/domain"
 )
@@ -18,6 +19,11 @@ func (s *Storage) GetReviewStat() ([]domain.UserReviewStat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("rows close failed: %v", err)
+		}
+	}()
 
 	// Переброр всех reviewer
 	stats := make([]domain.UserReviewStat, 0)

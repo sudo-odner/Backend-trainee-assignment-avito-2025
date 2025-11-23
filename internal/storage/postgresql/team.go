@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/domain"
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
@@ -16,10 +17,14 @@ func (s *Storage) DeactivateTeamUsers(teamName string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			log.Printf("tx rollback failed: %v", err)
+		}
+	}()
 
 	// Проверка на существоание команды
 	if err := s.IsTeamExists(teamName); err != nil {
-		_ = tx.Rollback()
 		return -1, err
 	}
 
@@ -31,13 +36,11 @@ func (s *Storage) DeactivateTeamUsers(teamName string) (int, error) {
         where tu.team_name = $1 and u.id = tu.user_id
     `, teamName)
 	if err != nil {
-		_ = tx.Rollback()
 		return -1, err
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		_ = tx.Rollback()
 		return -1, err
 	}
 
@@ -51,12 +54,10 @@ func (s *Storage) DeactivateTeamUsers(teamName string) (int, error) {
 		and pull_requests.status = 'OPEN';
     `, teamName)
 	if err != nil {
-		_ = tx.Rollback()
 		return -1, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return -1, err
 	}
 
@@ -97,6 +98,11 @@ func (s *Storage) GetTeam(nameTeam string) (*domain.Team, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("rows close failed: %v", err)
+		}
+	}()
 
 	var team domain.Team
 
@@ -124,6 +130,11 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			log.Printf("tx rollback failed: %v", err)
+		}
+	}()
 
 	queryInsertTeam := `insert into teams (name) values ($1) on conflict(name) do nothing returning name`
 	querySoftInsertUser := `
@@ -138,7 +149,6 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 	res := tx.QueryRow(queryInsertTeam, nameTeam)
 	var nameTeamRes string
 	if err = res.Scan(&nameTeamRes); err != nil {
-		_ = tx.Rollback()
 		if errors.Is(err, sql.ErrNoRows) {
 			return storage.ErrTeamAlreadyExists
 		}
@@ -150,26 +160,22 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 		// Обновляем/Добовляем пользователей
 		_, err = tx.Exec(querySoftInsertUser, user.ID, user.Name, user.IsActive)
 		if err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 
 		// Удаляем старую связь с командой (у пользователя должна быть одна команда) TODO: Придумать другую логику
 		if _, err := tx.Exec(`delete from teams_users where user_id = $1`, user.ID); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 
 		// Добавляем связи
 		_, err = tx.Exec(querySoftTeamsUsers, nameTeam, user.ID)
 		if err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("%s: %w", op, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("%s: %w", op, err)
 	}
 	return nil

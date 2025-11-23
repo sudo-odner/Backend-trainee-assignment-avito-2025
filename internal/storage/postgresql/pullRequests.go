@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/lib/pq"
@@ -79,7 +80,7 @@ func (s *Storage) GetPRByID(pullRequestID string) (*domain.PullRequest, error) {
 			&prName,
 			&authorID, &authorName, &authorIsActive,
 			&prStatus, &prMergedAt,
-			&reviewerID, &reviewerName, reviewerIsActive); err != nil {
+			&reviewerID, &reviewerName, &reviewerIsActive); err != nil {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 		if pr == nil {
@@ -127,11 +128,15 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			log.Printf("tx rollback failed: %v", err)
+		}
+	}()
 
 	// Получаем автора (проверка на существования)
 	author, err := s.GetUserByID(authorID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -140,7 +145,6 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 		`insert into pull_requests (id, name, author_id, status) values ($1, $2, $3, $4)`,
 		prID, prName, authorID, "OPEN")
 	if err != nil {
-		_ = tx.Rollback()
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
 			return nil, storage.ErrPRAlreadyExists
 		}
@@ -150,7 +154,6 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 	// Получаем команду пользователя
 	nameTeam, err := s.GetUserTeamByID(author.ID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -164,15 +167,18 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 		nameTeam, authorID,
 	)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("rows close failed: %v", err)
+		}
+	}()
 
 	var reviewers []domain.User
 	for rows.Next() {
 		var r domain.User
 		if err := rows.Scan(&r.ID, &r.Name, &r.IsActive); err != nil {
-			_ = tx.Rollback()
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 		reviewers = append(reviewers, r)
@@ -185,13 +191,11 @@ func (s *Storage) CreatePRWithReviewers(prID, prName, authorID string) (*domain.
 	// Создаем связи
 	for _, r := range reviewers {
 		if _, err := tx.Exec(`insert into pr_reviewers(pull_request_id, reviewer_id) values($1, $2)`, prID, r.ID); err != nil {
-			_ = tx.Rollback()
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	return &domain.PullRequest{
@@ -211,30 +215,31 @@ func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequ
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			log.Printf("tx rollback failed: %v", err)
+		}
+	}()
 
 	// Получаем пользователя (проверка на его существования)
 	_, err = s.GetUserByID(oldReviewerID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Проверка на MERGE PR
 	if err := s.IsMergePR(prID); err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Проверка на то что пользователь назначен как reviewer
 	if err := s.IsUserReviewerPR(prID, oldReviewerID); err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Получаем название команды у reviewer
 	teamName, err := s.GetUserTeamByID(oldReviewerID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -248,10 +253,8 @@ func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequ
     order by random() limit 1`, teamName, oldReviewerID, prID).Scan(&newReviewerID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			_ = tx.Rollback()
 			return nil, "", storage.ErrNoCandidate
 		}
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -260,19 +263,16 @@ func (s *Storage) ReassignReviewer(prID, oldReviewerID string) (*domain.PullRequ
 		`update pr_reviewers set reviewer_id=$1 where pull_request_id=$2 AND reviewer_id=$3`,
 		newReviewerID, prID, oldReviewerID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Получаем обновлённый PR с reviewer
 	pr, err := s.GetPRByID(prID)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return nil, "", fmt.Errorf("%s: %w", op, err)
 	}
 	return pr, newReviewerID, nil
