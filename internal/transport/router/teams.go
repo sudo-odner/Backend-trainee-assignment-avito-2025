@@ -135,3 +135,59 @@ func (router *Router) TGET(w http.ResponseWriter, r *http.Request) {
 		Members:  members,
 	})
 }
+
+func (router *Router) DeactivateTeamUsers(w http.ResponseWriter, r *http.Request) {
+	type request struct {
+		TeamName string `json:"team_name" validate:"required"`
+	}
+	type response struct {
+		TeamName        string `json:"team_name"`
+		DeactivateCount int    `json:"deactivate_count"`
+	}
+
+	// Декодирование и валидация request
+	var req request
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		router.log.Error("failed to decode request", sl.Err(err))
+		w.WriteHeader(http.StatusBadRequest)
+		render.JSON(w, r, transport.ErrResponse{
+			Code:    transport.BAD_REQUEST,
+			Message: "failed to decode request",
+		})
+		return
+	}
+	if err := validator.New().Struct(req); err != nil {
+		router.log.Error("failed to validate request", sl.Err(err))
+		w.WriteHeader(http.StatusBadRequest)
+		render.JSON(w, r, transport.ErrResponse{
+			Code:    transport.BAD_REQUEST,
+			Message: "failed to validate request",
+		})
+		return
+	}
+
+	count, err := router.storage.DeactivateTeamUsers(req.TeamName)
+	if err != nil {
+		if errors.Is(err, storage.ErrTeamNotFound) {
+			router.log.Error("failed to deactivate team", sl.Err(err))
+			w.WriteHeader(http.StatusNotFound)
+			render.JSON(w, r, transport.ErrResponse{
+				Code:    transport.NOT_FOUND,
+				Message: "resource not found",
+			})
+			return
+		}
+		router.log.Error("failed to deactivate team users", sl.Err(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		render.JSON(w, r, transport.ErrResponse{
+			Code:    transport.SERVER_ERROR,
+			Message: "failed to deactivate team users",
+		})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	render.JSON(w, r, response{
+		TeamName:        req.TeamName,
+		DeactivateCount: count,
+	})
+}

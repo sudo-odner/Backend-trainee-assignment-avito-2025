@@ -33,6 +33,7 @@ func New(log *slog.Logger, storage *postgresql.Storage) http.Handler {
 	router.Route("/team", func(team chi.Router) {
 		team.Post("/add", r.TPOSTAdd)
 		team.Get("/get", r.TGET)
+		team.Post("/deactivate", r.DeactivateTeamUsers)
 	})
 	// Users
 	router.Route("/users", func(users chi.Router) {

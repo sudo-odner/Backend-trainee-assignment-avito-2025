@@ -10,6 +10,59 @@ import (
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
 )
 
+// DeactivateTeamUsers Массовая деактивация пользователей команды
+func (s *Storage) DeactivateTeamUsers(teamName string) (int, error) {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return -1, err
+	}
+
+	// Проверка на существоание команды
+	if err := s.IsTeamExists(teamName); err != nil {
+		_ = tx.Rollback()
+		return -1, err
+	}
+
+	// Деактивируем пользователей
+	res, err := tx.Exec(`
+        update users u
+        set is_active = false
+        from teams_users tu
+        where tu.team_name = $1 and u.id = tu.user_id
+    `, teamName)
+	if err != nil {
+		_ = tx.Rollback()
+		return -1, err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return -1, err
+	}
+
+	// Удаляем их из pr_reviewers для открытых PR
+	_, err = tx.Exec(`
+		delete from pr_reviewers
+		using pull_requests, teams_users
+		where pr_reviewers.reviewer_id = teams_users.user_id
+		and teams_users.team_name = $1
+		and pr_reviewers.pull_request_id = pull_requests.id
+		and pull_requests.status = 'OPEN';
+    `, teamName)
+	if err != nil {
+		_ = tx.Rollback()
+		return -1, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return -1, err
+	}
+
+	return int(rowsAffected), nil
+}
+
 // IsTeamExists Проверка существования команды
 func (s *Storage) IsTeamExists(nameTeam string) error {
 	const op = "storage.postgresql.IsTeamExists"
