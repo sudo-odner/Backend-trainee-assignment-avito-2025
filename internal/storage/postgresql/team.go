@@ -99,6 +99,12 @@ func (s *Storage) CreateTeamWithUser(nameTeam string, users []domain.User) error
 		if err != nil {
 			return fmt.Errorf("%s: %w", op, err)
 		}
+
+		// Удаляем старую связь с командой (у пользователя должна быть одна команда) TODO: Придумать другую логику
+		if _, err := tx.Exec(`delete from teams_users where user_id = $1`, user.ID); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+
 		// Добавляем связи
 		_, err = tx.Exec(querySoftTeamsUsers, nameTeam, user.ID)
 		if err != nil {
