@@ -18,7 +18,7 @@
   - `domain` - контракты общения между модулями (storage и transport)
   - `storage` - хранилище
     - `postgresql` - модель DB в `PostgreSQL`
-    - `Err` - Ошибки, который могут придти с storage 
+    - `Err` - Ошибки, который могут прийти с storage 
     - `Migrantion` - Код миграции BD
   - `transport` - точка вхождения в приложения (через HTTP)
     - `router` - внешние ручки `chi`
