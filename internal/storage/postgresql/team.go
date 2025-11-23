@@ -8,7 +8,6 @@ import (
 
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/domain"
 	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage"
-	"github.com/sudo-odner/Backend-trainee-assignment-avito-2025/internal/storage/models"
 )
 
 // IsTeamExists Проверка существования команды
@@ -37,7 +36,7 @@ func (s *Storage) GetTeam(nameTeam string) (*domain.Team, error) {
 
 	// Получение команды и ее пользователей
 	rows, err := s.db.Query(`
-		select u.internal_id, u.id, u.name, u.is_active
+		select u.id, u.name, u.is_active
 			from teams_users tu
 			left join users u on tu.user_id = u.id
 			where tu.team_name = $1;`,
@@ -52,11 +51,12 @@ func (s *Storage) GetTeam(nameTeam string) (*domain.Team, error) {
 	team.Name = nameTeam
 	team.Users = make([]domain.User, 0)
 	for rows.Next() {
-		var u models.User
-		if err = rows.Scan(&u.InternalID, &u.ID, &u.Name, &u.IsActive); err != nil {
+		var userID, userName sql.NullString
+		var isActive sql.NullBool
+		if err = rows.Scan(&userID, &userName, &isActive); err != nil {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
-		team.Users = append(team.Users, domain.User{ID: u.ID, Name: u.Name, IsActive: u.IsActive})
+		team.Users = append(team.Users, domain.User{ID: userID.String, Name: userName.String, IsActive: isActive.Bool})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
